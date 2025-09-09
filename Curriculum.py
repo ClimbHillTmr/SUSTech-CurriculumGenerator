@@ -67,7 +67,7 @@ class Curriculum:
         ics_text = self.get_ics_text()
         open("%s.ics"%self.calendar_name,"w",encoding="utf8").write(ics_text)
 
-def add_course(curriculum, name, start_time, end_time, location, week, term_end, travel_time_minutes=30):
+def add_course(curriculum, name, start_time, end_time, location, week, term_end, travel_time_minutes=30, is_single_event=False):
     """
     向Curriculum对象添加事件的方法
     :param curriculum: curriculum实例
@@ -78,28 +78,36 @@ def add_course(curriculum, name, start_time, end_time, location, week, term_end,
     :param week: 上课周次（每周=0，隔周=1）
     :param term_end: 学期结束日期
     :param travel_time_minutes: 路程时间（分钟），用于设置提前多少分钟提醒
+    :param is_single_event: 是否为单次事件（不重复）
     :return: 添加的课程对象
     """
     time_format = "TZID=Asia/Shanghai:{date.year}{date.month:0>2d}{date.day:0>2d}T{date.hour:0>2d}{date.minute:0>2d}{date.second:0>2d}"
     dt_start = time_format.format(date=start_time)
     dt_end = time_format.format(date=end_time)
     create_time = datetime.datetime.today().strftime("%Y%m%dT%H%M%SZ")
-    if week == CourseRepetitionType.weekly:
-        rrule = "FREQ=WEEKLY;UNTIL={date.year}{date.month:0>2d}{date.day:0>2d}T{date.hour:0>2d}{date.minute:0>2d}{date.second:0>2d}".format(date=term_end)
-    else:
-        rrule = "FREQ=WEEKLY;UNTIL={date.year}{date.month:0>2d}{date.day:0>2d}T{date.hour:0>2d}{date.minute:0>2d}{date.second:0>2d};INTERVAL=2".format(date=term_end)
-    course_id = curriculum.add_course(
-        SUMMARY=name,
-        CREATED=create_time,
-        DTSTART=dt_start,
-        DTSTAMP=create_time,
-        DTEND=dt_end,
-        UID=str(uuid.uuid4()),
-        SEQUENCE="0",
-        LAST_MODIFIED=create_time,
-        LOCATION=location,
-        RRULE=rrule
-    )
+    
+    # 构建课程参数
+    course_params = {
+        "SUMMARY": name,
+        "CREATED": create_time,
+        "DTSTART": dt_start,
+        "DTSTAMP": create_time,
+        "DTEND": dt_end,
+        "UID": str(uuid.uuid4()),
+        "SEQUENCE": "0",
+        "LAST_MODIFIED": create_time,
+        "LOCATION": location
+    }
+    
+    # 只有非单次事件才添加重复规则
+    if not is_single_event:
+        if week == CourseRepetitionType.weekly:
+            rrule = "FREQ=WEEKLY;UNTIL={date.year}{date.month:0>2d}{date.day:0>2d}T{date.hour:0>2d}{date.minute:0>2d}{date.second:0>2d}".format(date=term_end)
+        else:
+            rrule = "FREQ=WEEKLY;UNTIL={date.year}{date.month:0>2d}{date.day:0>2d}T{date.hour:0>2d}{date.minute:0>2d}{date.second:0>2d};INTERVAL=2".format(date=term_end)
+        course_params["RRULE"] = rrule
+    
+    course_id = curriculum.add_course(**course_params)
     
     # 添加路程时间提醒
     course = curriculum.__courses__[course_id]

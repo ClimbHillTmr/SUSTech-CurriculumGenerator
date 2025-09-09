@@ -44,10 +44,11 @@ def usage():
     print("注意: 学期开始时间为学期第一周的周一，学期结束时间为学期最后一周的周末")
     sys.exit(1)
 
-def get_holidays(start_date, end_date):
-    """获取节假日信息"""
-    print("正在获取节假日信息...")
+def get_holidays_and_workdays(start_date, end_date):
+    """获取节假日和调休工作日信息"""
+    print("正在获取节假日和调休工作日信息...")
     holidays = []
+    workdays = []  # 调休工作日
     
     try:
         # 尝试使用范围API获取节假日信息
@@ -61,11 +62,14 @@ def get_holidays(start_date, end_date):
         if data["code"] == 0:
             holiday_data = data["holiday"]
             for date_str, info in holiday_data.items():
+                year, month, day = map(int, date_str.split("-"))
+                date_obj = datetime.date(year, month, day)
                 if info["holiday"]:
-                    year, month, day = map(int, date_str.split("-"))
-                    holidays.append(datetime.date(year, month, day))
-            print(f"成功获取到{len(holidays)}个节假日信息")
-            return holidays
+                    holidays.append(date_obj)
+                elif info.get("work", False):  # 调休工作日
+                    workdays.append(date_obj)
+            print(f"成功获取到{len(holidays)}个节假日，{len(workdays)}个调休工作日")
+            return holidays, workdays
         else:
             print(f"API返回错误: {data['msg']}")
     except Exception as e:
@@ -80,29 +84,31 @@ def get_holidays(start_date, end_date):
         if response.status_code == 200:
             data = response.json()
             for date_str, info in data.get('holiday', {}).items():
-                if info.get('holiday', False):
-                    try:
-                        holiday_date = datetime.datetime.strptime(date_str, '%Y-%m-%d').date()
-                        if start_date <= holiday_date <= end_date:
-                            holidays.append(holiday_date)
-                    except ValueError:
-                        continue
-            print(f"从年度API获取到{len(holidays)}个节假日信息")
-            return holidays
+                try:
+                    date_obj = datetime.datetime.strptime(date_str, '%Y-%m-%d').date()
+                    if start_date <= date_obj <= end_date:
+                        if info.get('holiday', False):
+                            holidays.append(date_obj)
+                        elif info.get('work', False):  # 调休工作日
+                            workdays.append(date_obj)
+                except ValueError:
+                    continue
+            print(f"从年度API获取到{len(holidays)}个节假日，{len(workdays)}个调休工作日")
+            return holidays, workdays
     except Exception as e:
         print(f"年度API获取失败: {str(e)}")
     
     # 使用默认节假日信息
-    print("将使用默认节假日信息")
+    print("将使用默认节假日和调休工作日信息")
     current_year = start_date.year
-    holidays = get_default_holidays(current_year)
-    print(f"使用默认节假日信息，共{len(holidays)}个节假日")
-    return holidays
+    holidays, workdays = get_default_holidays_and_workdays(current_year)
+    print(f"使用默认信息，共{len(holidays)}个节假日，{len(workdays)}个调休工作日")
+    return holidays, workdays
 
-def get_default_holidays(year):
-    """获取默认节假日信息"""
+def get_default_holidays_and_workdays(year):
+    """获取默认节假日和调休工作日信息"""
     if year == 2025:
-        return [
+        holidays = [
             # 元旦
             datetime.date(2025, 1, 1),
             # 春节
@@ -120,8 +126,19 @@ def get_default_holidays(year):
             datetime.date(2025, 10, 1), datetime.date(2025, 10, 2), datetime.date(2025, 10, 3),
             datetime.date(2025, 10, 4), datetime.date(2025, 10, 5), datetime.date(2025, 10, 6), datetime.date(2025, 10, 7)
         ]
+        workdays = [
+            # 春节调休工作日
+            datetime.date(2025, 1, 26),  # 周日调休
+            datetime.date(2025, 2, 8),   # 周六调休
+            # 劳动节调休工作日
+            datetime.date(2025, 4, 27),  # 周日调休
+            # 国庆节调休工作日
+            datetime.date(2025, 9, 28),  # 周日调休
+            datetime.date(2025, 10, 11)  # 周六调休
+        ]
+        return holidays, workdays
     elif year == 2024:
-        return [
+        holidays = [
             # 元旦
             datetime.date(2024, 1, 1),
             # 春节
@@ -139,9 +156,21 @@ def get_default_holidays(year):
             datetime.date(2024, 10, 1), datetime.date(2024, 10, 2), datetime.date(2024, 10, 3),
             datetime.date(2024, 10, 4), datetime.date(2024, 10, 5), datetime.date(2024, 10, 6), datetime.date(2024, 10, 7)
         ]
+        workdays = [
+            # 春节调休工作日
+            datetime.date(2024, 2, 4),   # 周日调休
+            datetime.date(2024, 2, 18),  # 周日调休
+            # 劳动节调休工作日
+            datetime.date(2024, 4, 28),  # 周日调休
+            datetime.date(2024, 5, 11),  # 周六调休
+            # 国庆节调休工作日
+            datetime.date(2024, 9, 29),  # 周日调休
+            datetime.date(2024, 10, 12)  # 周六调休
+        ]
+        return holidays, workdays
     else:
         print(f"警告：没有{year}年的预设节假日信息，将使用2024年的节假日信息")
-        return get_default_holidays(2024)
+        return get_default_holidays_and_workdays(2024)
 
 def extract_course_info(course_text):
     """从课程文本中提取结构化信息"""
@@ -156,6 +185,10 @@ def extract_course_info(course_text):
             class_info = lines[i + 2].strip() if i + 2 < len(lines) else ""
             time_location = lines[i + 3].strip() if i + 3 < len(lines) else ""
             
+            # 跳过实验室安全学，由process_special_course处理
+            if "实验室安全学" in course_name:
+                continue
+                
             if course_name and '[' in time_location:
                 # 解析周次信息
                 week_pattern = re.findall(r'\[(\d+)-(\d+)(单|双)?周\]', time_location)
@@ -183,7 +216,7 @@ def extract_course_info(course_text):
     
     return courses
 
-def add_course_to_curriculum(curriculum, course_info, day_offset, term_start_date, term_end_date, holidays, default_travel_time):
+def add_course_to_curriculum(curriculum, course_info, day_offset, term_start_date, term_end_date, holidays, default_travel_time, is_single_event=False, workdays=None):
     """将课程信息添加到课程表中"""
     if not course_info['week_info'] or not course_info['time_slots']:
         print(f"警告: 课程 {course_info['name']} 缺少必要信息，跳过")
@@ -212,10 +245,23 @@ def add_course_to_curriculum(curriculum, course_info, day_offset, term_start_dat
     start_datetime = datetime.datetime.combine(week_start + datetime.timedelta(days=day_offset), course_start_time)
     end_datetime = datetime.datetime.combine(week_start + datetime.timedelta(days=day_offset), course_end_time)
     
-    # 检查是否为节假日
-    if start_datetime.date() in holidays:
-        print(f"跳过节假日课程: {course_info['name']} ({start_datetime.date()})")
+    # 检查是否为节假日或调休工作日
+    course_date = start_datetime.date()
+    weekday = course_date.weekday()  # 0=周一, 6=周日
+    
+    # 如果是节假日，跳过课程
+    if course_date in holidays:
+        print(f"跳过节假日课程: {course_info['name']} ({course_date})")
         return
+    
+    # 如果是周末但不是调休工作日，跳过课程
+    if weekday >= 5 and (workdays is None or course_date not in workdays):
+        print(f"跳过周末课程: {course_info['name']} ({course_date})")
+        return
+    
+    # 如果是调休工作日，正常上课
+    if workdays and course_date in workdays:
+        print(f"调休工作日正常上课: {course_info['name']} ({course_date})")
     
     # 设置地点
     if course_info['location'] == "无地点" or course_info['location'] == "未知地点":
@@ -235,11 +281,12 @@ def add_course_to_curriculum(curriculum, course_info, day_offset, term_start_dat
     # 添加课程到课程表
     term_end_datetime = datetime.datetime.combine(term_end_date, datetime.time.max)
     Curriculum.add_course(curriculum, course_info['name'], start_datetime, end_datetime, 
-                         location, repeat_type, term_end_datetime, travel_time_minutes=travel_time)
+                         location, repeat_type, term_end_datetime, travel_time_minutes=travel_time, 
+                         is_single_event=is_single_event)
     
     print(f"添加课程: {course_info['name']} - {start_datetime.strftime('%Y-%m-%d %H:%M')} ({location})")
 
-def process_special_course(course_value, sheet, course_row, day, term_start_date, term_end_date, holidays, default_travel_time, curriculum):
+def process_special_course(course_value, sheet, course_row, day, term_start_date, term_end_date, holidays, default_travel_time, curriculum, workdays=None):
     """处理特殊格式的课程（如实验室安全学）"""
     if "实验室安全学" in course_value:
         name = "实验室安全学"
@@ -265,12 +312,10 @@ def process_special_course(course_value, sheet, course_row, day, term_start_date
         
         # 解析周次信息
         week_patterns = re.findall(r"\[(\d+)-(\d+)(单|双)?周\]", course_value)
-        if not week_patterns:
-            week_patterns = re.findall(r"\[(\d+)周\]", course_value)
-            if week_patterns:
-                week_patterns = [(week_patterns[0], week_patterns[0], "")]
+        single_week_patterns = re.findall(r"\[(\d+)周\]", course_value)
         
         if week_patterns:
+            # 处理范围周次，如[2-12双周]
             start_week, end_week, week_type = week_patterns[0]
             
             if week_type == "双":
@@ -286,16 +331,84 @@ def process_special_course(course_value, sheet, course_row, day, term_start_date
             start_time = datetime.datetime.combine(week_start + datetime.timedelta(days=day), __course_start_time.get(num[0]))
             end_time = datetime.datetime.combine(week_start + datetime.timedelta(days=day), __course_end_time.get(num[1]))
             
-            # 检查是否为节假日
-            if start_time.date() not in holidays:
+            # 检查是否为节假日或调休工作日
+            course_date = start_time.date()
+            weekday = course_date.weekday()
+            
+            # 节假日跳过，周末非调休日跳过，调休工作日正常上课
+            if (course_date not in holidays and 
+                (weekday < 5 or (workdays and course_date in workdays))):
                 term_end_datetime = datetime.datetime.combine(term_end_date, datetime.time.max)
                 safety_travel_time = default_travel_time * 2
                 Curriculum.add_course(curriculum, name, start_time, end_time, location, repeat_type, term_end_datetime, travel_time_minutes=safety_travel_time)
                 print(f"添加实验室安全学: {start_time.strftime('%Y-%m-%d %H:%M')} - {end_time.strftime('%H:%M')} @ {location}")
+        
+        elif single_week_patterns:
+            # 处理单次课程，如[12周]
+            target_week = int(single_week_patterns[0])
+            
+            # 解析时间段信息 [1-8节]
+            time_slot_patterns = re.findall(r"\[(\d+)-(\d+)节\]", course_value)
+            if time_slot_patterns:
+                start_slot, end_slot = time_slot_patterns[0]
+                
+                # 计算目标周的日期
+                target_date = term_start_date + datetime.timedelta(days=(target_week-1)*7 + day)
+                
+                # 为每个时间段创建单独的课程事件
+                current_slot = int(start_slot)
+                while current_slot <= int(end_slot):
+                    # 确定当前时间段的开始和结束时间
+                    if current_slot % 2 == 1:  # 奇数节为开始时间
+                        slot_start_time = __course_start_time.get(str(current_slot), datetime.time(8))
+                        if current_slot < int(end_slot):
+                            slot_end_time = __course_end_time.get(str(current_slot + 1), datetime.time(9, 50))
+                            current_slot += 2
+                        else:
+                            slot_end_time = __course_end_time.get(str(current_slot + 1), datetime.time(9, 50))
+                            current_slot += 1
+                    else:
+                        current_slot += 1
+                        continue
+                    
+                    start_datetime = datetime.datetime.combine(target_date, slot_start_time)
+                    end_datetime = datetime.datetime.combine(target_date, slot_end_time)
+                    
+                    # 检查是否为节假日或调休工作日
+                    course_date = start_datetime.date()
+                    weekday = course_date.weekday()
+                    
+                    # 实验室安全学单次课程特殊处理：只跳过节假日，不跳过周末
+                    # 其他课程：节假日跳过，周末非调休日跳过，调休工作日正常上课
+                    if (course_date not in holidays):
+                        safety_travel_time = default_travel_time * 2
+                        # 单次课程不需要重复，设置结束时间为当天
+                        single_event_end = datetime.datetime.combine(target_date, datetime.time.max)
+                        Curriculum.add_course(curriculum, name, start_datetime, end_datetime, location, 
+                                             Curriculum.CourseRepetitionType.weekly, single_event_end, 
+                                             travel_time_minutes=safety_travel_time, is_single_event=True)
+                        print(f"添加实验室安全学(单次): {start_datetime.strftime('%Y-%m-%d %H:%M')} - {end_datetime.strftime('%H:%M')} @ {location}")
+            else:
+                # 如果没有找到时间段信息，使用默认时间
+                target_date = term_start_date + datetime.timedelta(days=(target_week-1)*7 + day)
+                start_time = datetime.datetime.combine(target_date, __course_start_time.get(num[0]))
+                end_time = datetime.datetime.combine(target_date, __course_end_time.get(num[1]))
+                
+                course_date = start_time.date()
+                weekday = course_date.weekday()
+                
+                # 实验室安全学单次课程特殊处理：只跳过节假日，不跳过周末
+                if (course_date not in holidays):
+                    safety_travel_time = default_travel_time * 2
+                    single_event_end = datetime.datetime.combine(target_date, datetime.time.max)
+                    Curriculum.add_course(curriculum, name, start_time, end_time, location, 
+                                         Curriculum.CourseRepetitionType.weekly, single_event_end, 
+                                         travel_time_minutes=safety_travel_time, is_single_event=True)
+                    print(f"添加实验室安全学(单次): {start_time.strftime('%Y-%m-%d %H:%M')} - {end_time.strftime('%H:%M')} @ {location}")
         return True
     return False
 
-def process_regular_course(course_value, sheet, course_row, day, term_start_date, term_end_date, holidays, default_travel_time, curriculum):
+def process_regular_course(course_value, sheet, course_row, day, term_start_date, term_end_date, holidays, default_travel_time, curriculum, workdays=None):
     """处理常规格式的课程"""
     val = course_value.split("\n")
     
@@ -303,7 +416,7 @@ def process_regular_course(course_value, sheet, course_row, day, term_start_date
     structured_courses = extract_course_info(course_value)
     if structured_courses:
         for course_info in structured_courses:
-            add_course_to_curriculum(curriculum, course_info, day, term_start_date, term_end_date, holidays, default_travel_time)
+            add_course_to_curriculum(curriculum, course_info, day, term_start_date, term_end_date, holidays, default_travel_time, workdays=workdays)
         return
     
     # 如果结构化解析失败，使用原版的解析方法
@@ -351,9 +464,14 @@ def process_regular_course(course_value, sheet, course_row, day, term_start_date
         else:
             location = "南方科技大学-未知地点"
         
-        # 检查是否为节假日
-        if start_time.date() in holidays:
-            print(f"跳过节假日课程: {name} on {start_time.date()}")
+        # 检查是否为节假日或调休工作日
+        course_date = start_time.date()
+        weekday = course_date.weekday()
+        
+        # 节假日跳过，周末非调休日跳过，调休工作日正常上课
+        if (course_date in holidays or 
+            (weekday >= 5 and (not workdays or course_date not in workdays))):
+            print(f"跳过节假日或非工作日课程: {name} on {course_date}")
             continue
         
         # 根据课程类型调整路程时间
@@ -416,8 +534,8 @@ def main():
         print(f"错误：无法读取Excel文件 - {str(e)}")
         sys.exit(1)
     
-    # 获取节假日信息
-    holidays = get_holidays(term_start_date, term_end_date)
+    # 获取节假日和调休工作日信息
+    holidays, workdays = get_holidays_and_workdays(term_start_date, term_end_date)
     
     # 创建课程表对象
     curriculum = Curriculum.Curriculum()
@@ -436,13 +554,13 @@ def main():
                 print(f"  第{course.row}行: {repr(course.value[:50])}...")
                 
                 # 首先尝试处理特殊课程
-                if process_special_course(course.value, sheet, course.row, day, term_start_date, term_end_date, holidays, default_travel_time, curriculum):
+                if process_special_course(course.value, sheet, course.row, day, term_start_date, term_end_date, holidays, default_travel_time, curriculum, workdays):
                     total_courses += 1
                     continue
                 
                 # 处理常规课程
                 if '[' in course.value:
-                    process_regular_course(course.value, sheet, course.row, day, term_start_date, term_end_date, holidays, default_travel_time, curriculum)
+                    process_regular_course(course.value, sheet, course.row, day, term_start_date, term_end_date, holidays, default_travel_time, curriculum, workdays)
                     total_courses += 1
         
         day += 1
