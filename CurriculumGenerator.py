@@ -225,43 +225,9 @@ def add_course_to_curriculum(curriculum, course_info, day_offset, term_start_dat
     start_week, end_week, week_type = course_info['week_info']
     start_time_slot, end_time_slot = course_info['time_slots']
     
-    # 确定重复类型和开始时间
-    if week_type == "双":
-        repeat_type = Curriculum.CourseRepetitionType.biweekly
-        # 双周课程从指定周的第二次出现开始
-        week_start = term_start_date + datetime.timedelta(days=(int(start_week))*7)
-    elif week_type == "单":
-        repeat_type = Curriculum.CourseRepetitionType.biweekly
-        # 单周课程从指定周开始
-        week_start = term_start_date + datetime.timedelta(days=(int(start_week)-1)*7)
-    else:
-        repeat_type = Curriculum.CourseRepetitionType.weekly
-        week_start = term_start_date + datetime.timedelta(days=(int(start_week)-1)*7)
-    
     # 计算具体的开始和结束时间
     course_start_time = __course_start_time.get(start_time_slot, datetime.time(8))
     course_end_time = __course_end_time.get(end_time_slot, datetime.time(9, 50))
-    
-    start_datetime = datetime.datetime.combine(week_start + datetime.timedelta(days=day_offset), course_start_time)
-    end_datetime = datetime.datetime.combine(week_start + datetime.timedelta(days=day_offset), course_end_time)
-    
-    # 检查是否为节假日或调休工作日
-    course_date = start_datetime.date()
-    weekday = course_date.weekday()  # 0=周一, 6=周日
-    
-    # 如果是节假日，跳过课程
-    if course_date in holidays:
-        print(f"跳过节假日课程: {course_info['name']} ({course_date})")
-        return
-    
-    # 如果是周末但不是调休工作日，跳过课程
-    if weekday >= 5 and (workdays is None or course_date not in workdays):
-        print(f"跳过周末课程: {course_info['name']} ({course_date})")
-        return
-    
-    # 如果是调休工作日，正常上课
-    if workdays and course_date in workdays:
-        print(f"调休工作日正常上课: {course_info['name']} ({course_date})")
     
     # 设置地点
     if course_info['location'] == "无地点" or course_info['location'] == "未知地点":
@@ -278,13 +244,38 @@ def add_course_to_curriculum(curriculum, course_info, day_offset, term_start_dat
     elif "第一科研楼" in location or "荔园" in location:
         travel_time = int(default_travel_time * 1.33)
     
-    # 添加课程到课程表
-    term_end_datetime = datetime.datetime.combine(term_end_date, datetime.time.max)
-    Curriculum.add_course(curriculum, course_info['name'], start_datetime, end_datetime, 
-                         location, repeat_type, term_end_datetime, travel_time_minutes=travel_time, 
-                         is_single_event=is_single_event)
-    
-    print(f"添加课程: {course_info['name']} - {start_datetime.strftime('%Y-%m-%d %H:%M')} ({location})")
+    # 循环遍历周次范围
+    for w in range(int(start_week), int(end_week) + 1):
+        if week_type == "单" and w % 2 == 0:
+            continue
+        if week_type == "双" and w % 2 == 1:
+            continue
+        if week_type not in ["单", "双", ""] :
+            continue  # 如果有其他类型，跳过（可选扩展）
+        
+        course_date = term_start_date + datetime.timedelta(days=(w - 1) * 7 + day_offset)
+        if course_date > term_end_date:
+            continue
+        
+        if course_date in holidays:
+            print(f"跳过节假日课程: {course_info['name']} ({course_date})")
+            continue
+        
+        weekday = course_date.weekday()
+        if weekday >= 5 and (workdays is None or course_date not in workdays):
+            print(f"跳过周末课程: {course_info['name']} ({course_date})")
+            continue
+        
+        start_datetime = datetime.datetime.combine(course_date, course_start_time)
+        end_datetime = datetime.datetime.combine(course_date, course_end_time)
+        
+        # 添加单个事件
+        single_event_end = datetime.datetime.combine(course_date, datetime.time.max)
+        Curriculum.add_course(curriculum, course_info['name'], start_datetime, end_datetime, 
+                             location, Curriculum.CourseRepetitionType.weekly, single_event_end, 
+                             travel_time_minutes=travel_time, is_single_event=True)
+        
+        print(f"添加课程: {course_info['name']} - {start_datetime.strftime('%Y-%m-%d %H:%M')} ({location})")
 
 def process_special_course(course_value, sheet, course_row, day, term_start_date, term_end_date, holidays, default_travel_time, curriculum, workdays=None):
     """处理特殊格式的课程（如实验室安全学）"""
@@ -318,29 +309,33 @@ def process_special_course(course_value, sheet, course_row, day, term_start_date
             # 处理范围周次，如[2-12双周]
             start_week, end_week, week_type = week_patterns[0]
             
-            if week_type == "双":
-                repeat_type = Curriculum.CourseRepetitionType.biweekly
-                week_start = term_start_date + datetime.timedelta(days=(int(start_week))*7)
-            elif week_type == "单":
-                repeat_type = Curriculum.CourseRepetitionType.biweekly
-                week_start = term_start_date + datetime.timedelta(days=(int(start_week)-1)*7)
-            else:
-                repeat_type = Curriculum.CourseRepetitionType.weekly
-                week_start = term_start_date + datetime.timedelta(days=(int(start_week)-1)*7)
-            
-            start_time = datetime.datetime.combine(week_start + datetime.timedelta(days=day), __course_start_time.get(num[0]))
-            end_time = datetime.datetime.combine(week_start + datetime.timedelta(days=day), __course_end_time.get(num[1]))
-            
-            # 检查是否为节假日或调休工作日
-            course_date = start_time.date()
-            weekday = course_date.weekday()
-            
-            # 节假日跳过，周末非调休日跳过，调休工作日正常上课
-            if (course_date not in holidays and 
-                (weekday < 5 or (workdays and course_date in workdays))):
-                term_end_datetime = datetime.datetime.combine(term_end_date, datetime.time.max)
+            # 循环遍历周次范围
+            for w in range(int(start_week), int(end_week) + 1):
+                if week_type == "单" and w % 2 == 0:
+                    continue
+                if week_type == "双" and w % 2 == 1:
+                    continue
+                
+                course_date = term_start_date + datetime.timedelta(days=(w - 1) * 7 + day)
+                if course_date > term_end_date:
+                    continue
+                
+                if course_date in holidays:
+                    print(f"跳过节假日课程: {name} ({course_date})")
+                    continue
+                
+                weekday = course_date.weekday()
+                if weekday >= 5 and (workdays is None or course_date not in workdays):
+                    print(f"跳过周末课程: {name} ({course_date})")
+                    continue
+                
+                start_time = datetime.datetime.combine(course_date, __course_start_time.get(num[0]))
+                end_time = datetime.datetime.combine(course_date, __course_end_time.get(num[1]))
+                
+                # 添加单个事件
+                single_event_end = datetime.datetime.combine(course_date, datetime.time.max)
                 safety_travel_time = default_travel_time * 2
-                Curriculum.add_course(curriculum, name, start_time, end_time, location, repeat_type, term_end_datetime, travel_time_minutes=safety_travel_time)
+                Curriculum.add_course(curriculum, name, start_time, end_time, location, Curriculum.CourseRepetitionType.weekly, single_event_end, travel_time_minutes=safety_travel_time, is_single_event=True)
                 print(f"添加实验室安全学: {start_time.strftime('%Y-%m-%d %H:%M')} - {end_time.strftime('%H:%M')} @ {location}")
         
         elif single_week_patterns:
