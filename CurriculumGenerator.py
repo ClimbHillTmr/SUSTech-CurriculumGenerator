@@ -230,10 +230,13 @@ def add_course_to_curriculum(curriculum, course_info, day_offset, term_start_dat
     course_end_time = __course_end_time.get(end_time_slot, datetime.time(9, 50))
     
     # 设置地点
+    
     if course_info['location'] == "无地点" or course_info['location'] == "未知地点":
         location = "南方科技大学-在线课程"
     else:
-        location = f"南方科技大学-{course_info['location']}"
+        adjusted_location = course_info['location'].replace("三教", "第三教学楼")
+        location = f"南方科技大学-{adjusted_location}"
+
     
     # 设置提醒时间
     travel_time = default_travel_time
