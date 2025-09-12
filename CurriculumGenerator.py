@@ -121,7 +121,7 @@ def get_default_holidays_and_workdays(year):
             # 端午节
             datetime.date(2025, 6, 2), datetime.date(2025, 6, 3), datetime.date(2025, 6, 4),
             # 中秋节
-            datetime.date(2025, 9, 13), datetime.date(2025, 9, 14), datetime.date(2025, 9, 15),
+            datetime.date(2025, 10, 6),
             # 国庆节
             datetime.date(2025, 10, 1), datetime.date(2025, 10, 2), datetime.date(2025, 10, 3),
             datetime.date(2025, 10, 4), datetime.date(2025, 10, 5), datetime.date(2025, 10, 6), datetime.date(2025, 10, 7)
@@ -540,6 +540,9 @@ def main():
     
     print("开始解析课程信息...")
     
+    # 用于去重的集合，存储已处理的特殊课程
+    processed_special_courses = set()
+    
     # 遍历Excel表格的列（星期一到星期日）
     day = 0  # 0=星期一, 1=星期二, ..., 6=星期日
     total_courses = 0
@@ -550,6 +553,39 @@ def main():
         for course in col:
             if course.value and isinstance(course.value, str):
                 print(f"  第{course.row}行: {repr(course.value[:50])}...")
+                
+                # 检查是否为特殊课程且已处理过
+                if "实验室安全学" in course.value:
+                    # 提取关键信息用于去重：周次信息、地点信息、时间段信息
+                    week_info = ""
+                    location_info = ""
+                    time_info = ""
+                    
+                    # 提取周次信息
+                    week_patterns = re.findall(r"\[(\d+)-(\d+)(单|双)?周\]", course.value)
+                    single_week_patterns = re.findall(r"\[(\d+)周\]", course.value)
+                    if week_patterns:
+                        week_info = f"{week_patterns[0][0]}-{week_patterns[0][1]}{week_patterns[0][2]}周"
+                    elif single_week_patterns:
+                        week_info = f"{single_week_patterns[0]}周"
+                    
+                    # 提取地点信息
+                    if "[无地点]" in course.value:
+                        location_info = "无地点"
+                    elif "一科报告厅" in course.value:
+                        location_info = "一科报告厅"
+                    
+                    # 提取时间段信息
+                    time_patterns = re.findall(r"\[(\d+)-(\d+)节\]", course.value)
+                    if time_patterns:
+                        time_info = f"{time_patterns[0][0]}-{time_patterns[0][1]}节"
+                    
+                    # 创建唯一标识符
+                    course_key = f"实验室安全学_{week_info}_{location_info}_{time_info}"
+                    if course_key in processed_special_courses:
+                        print(f"    跳过重复的特殊课程: 实验室安全学 ({week_info}, {location_info}, {time_info})")
+                        continue
+                    processed_special_courses.add(course_key)
                 
                 # 首先尝试处理特殊课程
                 if process_special_course(course.value, sheet, course.row, day, term_start_date, term_end_date, holidays, default_travel_time, curriculum, workdays):
